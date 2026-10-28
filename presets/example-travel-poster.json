@@ -1,0 +1,41 @@
+{
+  "summary": {
+    "caption": "A minimalist travel poster with a cream background, a blue mountain illustration, and the title EXPLORE at the top.",
+    "meta": "poster",
+    "canvas": "single"
+  },
+  "items": [
+    {
+      "id": "r_title",
+      "label": "text",
+      "name": "title",
+      "caption": "Large dark-blue uppercase title centered at the top.",
+      "text": "EXPLORE",
+      "color": "#4ea1ff",
+      "bbox": [
+        128,
+        96,
+        896,
+        224
+      ]
+    },
+    {
+      "id": "r_mtn",
+      "label": "object",
+      "name": "mountain",
+      "caption": "A flat blue mountain illustration in the lower center.",
+      "text": "",
+      "color": "#5ad1a5",
+      "bbox": [
+        320,
+        224,
+        704,
+        896
+      ]
+    }
+  ],
+  "loras": [],
+  "preset": "example-travel-poster",
+  "width": 1024,
+  "height": 1024
+}

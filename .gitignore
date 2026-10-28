@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# 用户自己的预设不进仓库，只保留示例
+presets/*.json
+!presets/example-*.json
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+*.log
