@@ -126,6 +126,84 @@ def _central_bbox(bbox, width: int, height: int):
     ]
 
 
+# ---------------- 词库占位符展开 ----------------
+# 输入框里存的是 <tag:别名>，真正喂给模型的提示词在这里展开。
+# 这样前端增删只针对 token，不会和相邻文本互相误伤；词条改了，引用它的格子也会自动跟上。
+
+TAG_PATTERN = re.compile(r"<tag:([^<>]+)>")
+_TAG_CACHE = {"mtime": 0.0, "map": {}}
+
+
+def _find_tag_data():
+    """定位 Danbooru-Gallery 的 PromptSelector 数据文件。"""
+    try:
+        base = folder_paths.base_path
+    except Exception:
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    direct = os.path.join(
+        base, "custom_nodes", "ComfyUI-Danbooru-Gallery", "py", "prompt_selector", "data.json"
+    )
+    if os.path.isfile(direct):
+        return direct
+    nodes_dir = os.path.join(base, "custom_nodes")
+    if os.path.isdir(nodes_dir):
+        for name in sorted(os.listdir(nodes_dir)):
+            cand = os.path.join(nodes_dir, name, "py", "prompt_selector", "data.json")
+            if os.path.isfile(cand):
+                return cand
+    return None
+
+
+def _load_tag_map():
+    """别名 / id -> 提示词正文。按文件 mtime 缓存，改词库不用重启。"""
+    path = _find_tag_data()
+    if not path:
+        return {}
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return _TAG_CACHE["map"]
+    if mtime == _TAG_CACHE["mtime"]:
+        return _TAG_CACHE["map"]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return _TAG_CACHE["map"]
+
+    mapping = {}
+    for cat in data.get("categories", []) or []:
+        for item in cat.get("prompts", []) or []:
+            body = str(item.get("prompt") or "").strip()
+            if not body:
+                continue
+            alias = str(item.get("alias") or "").strip()
+            if alias:
+                mapping[alias] = body
+            pid = str(item.get("id") or "").strip()
+            if pid:
+                mapping[pid] = body
+
+    _TAG_CACHE["mtime"] = mtime
+    _TAG_CACHE["map"] = mapping
+    return mapping
+
+
+def expand_tags(text: str) -> str:
+    """把 <tag:别名> 换成真实提示词。查不到就退化成裸词，别让尖括号跑进模型输入。"""
+    if not text or "<tag:" not in text:
+        return text
+    mapping = _load_tag_map()
+    if not mapping:
+        return TAG_PATTERN.sub(lambda m: m.group(1).strip(), text)
+
+    def _rep(m):
+        key = m.group(1).strip()
+        return mapping.get(key, key)
+
+    return TAG_PATTERN.sub(_rep, text)
+
+
 class PromptForge:
     CATEGORY = "PromptForge"
     FUNCTION = "build"
@@ -219,6 +297,7 @@ class PromptForge:
         extra = (extra_caption or "").strip()
         if extra:
             caption = f"{caption}, {extra}" if caption else extra
+        caption = expand_tags(caption)
 
         # meta 支持 "poster, 复古" 这种逗号串
         meta_raw = summary.get("meta", "")
@@ -232,14 +311,16 @@ class PromptForge:
         items_out = []
         plain_parts = []
         for it in items_raw:
-            entry = {"label": it["label"], "caption": it["caption"]}
-            if it["label"] == "text" and it["text"]:
-                entry["text"] = it["text"]
+            item_caption = expand_tags(it["caption"])
+            item_text = expand_tags(it["text"])
+            entry = {"label": it["label"], "caption": item_caption}
+            if it["label"] == "text" and item_text:
+                entry["text"] = item_text
             entry["bbox"] = _central_bbox(it["bbox"], w, h)
             items_out.append(entry)
 
             tag = it["name"] or it["label"]
-            desc = it["caption"] or it["text"]
+            desc = item_caption or item_text
             if desc:
                 plain_parts.append(f"{tag}: {desc}")
 

@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-promptforge"
 description = "Visual bbox prompt builder for ComfyUI — per-region prompts, tag library, LoRA stack, MOSS-Image layout JSON output"
-version = "1.0.0"
+version = "1.1.0"
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.9"

@@ -49,6 +49,38 @@ function findStandalone(text, piece) {
   return -1;
 }
 
+// 词库词条在输入框里的占位符。存进去的是 <tag:别名>，真实提示词在节点执行时才展开，
+// 这样删改都只针对这个 token，不会和相邻文本互相误伤。
+const TAG_ALIAS_MAX = 60;
+
+function makeTagToken(alias) {
+  const a = String(alias || "").trim().slice(0, TAG_ALIAS_MAX);
+  return a ? `<tag:${a.replace(/[<>]/g, "")}>` : "";
+}
+
+// 从后往前找 token（同一个词插多份时，撤掉最后那份），连带处理它自己那个分隔符
+function removeToken(text, token, sep) {
+  if (!text || !token) return null;
+  const i = text.lastIndexOf(token);
+  if (i < 0) return null;
+  let s = i;
+  let e = i + token.length;
+  if (sep && text.slice(s - sep.length, s) === sep) {
+    s -= sep.length;
+  } else if (sep && text.slice(e, e + sep.length) === sep) {
+    e += sep.length;
+  } else {
+    const mAfter = text.slice(e).match(/^\s*[,，、]\s*/);
+    if (mAfter) {
+      e += mAfter[0].length;
+    } else {
+      const mBefore = text.slice(0, s).match(/[,，、]\s*$/);
+      if (mBefore) s -= mBefore[0].length;
+    }
+  }
+  return (text.slice(0, s) + text.slice(e)).trim();
+}
+
 // rec: { text, sep }。sep 是插入那一刻自己补的分隔符（新数据一定有，老数据可能是 undefined）。
 // 只吃掉自己的分隔符，绝不动相邻词条自带的那一个 —— 否则 A="a," 这类以逗号收尾的词会被削掉逗号。
 function cutChip(text, rec) {
@@ -101,6 +133,7 @@ function normChips(raw) {
     const text = String(c.text || "");
     if (!text) continue;
     const rec = { id: String(c.id || ""), text };
+    if (c.alias) rec.alias = String(c.alias);
     if (Object.prototype.hasOwnProperty.call(c, "sep")) rec.sep = String(c.sep || "");
     out.push(rec);
   }
@@ -1297,14 +1330,22 @@ class ForgeUI {
     if (idx >= 0) {
       const rec = chips[idx];
       chips.splice(idx, 1);
-      const next = cutChip(ta.value, rec);
+      let next = null;
+      const token = rec.alias ? makeTagToken(rec.alias) : "";
+      if (token) next = removeToken(ta.value, token, rec.sep);
+      // 老工作流里存的是正文而不是 token，退回到按文本删
+      if (next === null && rec.text) next = cutChip(ta.value, rec);
       if (next !== null) {
         ta.value = next;
         ta.dispatchEvent(new Event("input", { bubbles: true }));
       }
     } else {
-      const sep = this.insertInto(ta, row.body);
-      chips.push({ id: String(row.p.id || ""), text: row.body, sep: sep || "" });
+      const alias = String(row.alias || "").trim();
+      const token = makeTagToken(alias);
+      // 没有别名就退回插正文（极少见：词库里存在没起名的条目）
+      const payload = token || row.body;
+      const sep = this.insertInto(ta, payload);
+      chips.push({ id: String(row.p.id || ""), alias, text: row.body, sep: sep || "" });
     }
     this.sync();
     this.renderLibraryList();
