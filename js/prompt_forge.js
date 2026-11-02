@@ -27,21 +27,50 @@ function rgba(hex, a) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-// 从文本里撤掉一段已插入的词，连带处理相邻的逗号分隔符
-function cutText(text, piece) {
-  if (!text || !piece) return null;
-  const i = text.indexOf(piece);
-  if (i < 0) return null;
-  let s = i;
-  let e = i + piece.length;
-  const after = text.slice(e);
-  const before = text.slice(0, s);
-  const mAfter = after.match(/^\s*[,，、]\s*/);
-  const mBefore = before.match(/[,，、]\s*$/);
-  if (mAfter) {
-    e += mAfter[0].length;
-  } else if (mBefore) {
-    s -= mBefore[0].length;
+// piece 前后必须是「开头 / 结尾 / 逗号 / 换行」才算独立片段。
+// 否则 A="foo bar"、B="foo" 时，删 B 会把 A 里的 foo 切掉，删完 A 就再也找不到了。
+function isSepBefore(b) {
+  return b.trim() === "" || /([,，、]|\n)\s*$/.test(b);
+}
+function isSepAfter(a) {
+  return a.trim() === "" || /^\s*([,，、]|\n)/.test(a);
+}
+
+// 从后往前找：同一个词插了多份时，撤掉的应该是最后插进来的那份
+function findStandalone(text, piece) {
+  let i = text.length;
+  while (i >= 0) {
+    const p = text.lastIndexOf(piece, i);
+    if (p < 0) return -1;
+    if (isSepBefore(text.slice(0, p)) && isSepAfter(text.slice(p + piece.length))) return p;
+    if (p === 0) return -1;
+    i = p - 1;
+  }
+  return -1;
+}
+
+// rec: { text, sep }。sep 是插入那一刻自己补的分隔符（新数据一定有，老数据可能是 undefined）。
+// 只吃掉自己的分隔符，绝不动相邻词条自带的那一个 —— 否则 A="a," 这类以逗号收尾的词会被削掉逗号。
+function cutChip(text, rec) {
+  if (!text || !rec || !rec.text) return null;
+  const p = findStandalone(text, rec.text);
+  if (p < 0) return null;
+  let s = p;
+  let e = p + rec.text.length;
+
+  if (rec.sep !== undefined) {
+    const sep = rec.sep;
+    if (sep && text.slice(s - sep.length, s) === sep) s -= sep.length;
+    else if (sep && text.slice(e, e + sep.length) === sep) e += sep.length;
+  } else {
+    // 老数据没有 sep 记录，退回旧行为：吃掉紧邻的一个分隔符
+    const mAfter = text.slice(e).match(/^\s*[,，、]\s*/);
+    if (mAfter) {
+      e += mAfter[0].length;
+    } else {
+      const mBefore = text.slice(0, s).match(/[,，、]\s*$/);
+      if (mBefore) s -= mBefore[0].length;
+    }
   }
   return (text.slice(0, s) + text.slice(e)).trim();
 }
@@ -71,7 +100,9 @@ function normChips(raw) {
     if (!c || typeof c !== "object") continue;
     const text = String(c.text || "");
     if (!text) continue;
-    out.push({ id: String(c.id || ""), text });
+    const rec = { id: String(c.id || ""), text };
+    if (Object.prototype.hasOwnProperty.call(c, "sep")) rec.sep = String(c.sep || "");
+    out.push(rec);
   }
   return out;
 }
@@ -1266,14 +1297,14 @@ class ForgeUI {
     if (idx >= 0) {
       const rec = chips[idx];
       chips.splice(idx, 1);
-      const next = cutText(ta.value, rec.text);
+      const next = cutChip(ta.value, rec);
       if (next !== null) {
         ta.value = next;
         ta.dispatchEvent(new Event("input", { bubbles: true }));
       }
     } else {
-      this.insertInto(ta, row.body);
-      chips.push({ id: String(row.p.id || ""), text: row.body });
+      const sep = this.insertInto(ta, row.body);
+      chips.push({ id: String(row.p.id || ""), text: row.body, sep: sep || "" });
     }
     this.sync();
     this.renderLibraryList();
@@ -1286,12 +1317,14 @@ class ForgeUI {
     const before = ta.value.slice(0, s);
     const after = ta.value.slice(e);
     const needsComma = before.trim() !== "" && !/[,，、]\s*$/.test(before);
-    const ins = (needsComma ? ", " : "") + text;
+    const sep = needsComma ? ", " : "";
+    const ins = sep + text;
     ta.value = before + ins + after;
     const pos = before.length + ins.length;
     ta.focus({ preventScroll: true });
     ta.setSelectionRange(pos, pos);
     ta.dispatchEvent(new Event("input", { bubbles: true }));
+    return sep;
   }
 
   /* ---- 新增 / 编辑词条 ---- */
